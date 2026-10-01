@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>DJ Track Hunter</title>
+    <link rel="stylesheet" href="common.css" />
+    <style>
+      body { width: 400px; }
+      header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+      section { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+      .row { display: flex; gap: 6px; align-items: center; }
+      .row input { flex: 1; }
+      #history { list-style: none; margin: 0; padding: 0; max-height: 380px; overflow: auto; }
+      #history li { padding: 8px 14px; border-bottom: 1px solid var(--border); }
+      .top { display: flex; gap: 8px; align-items: baseline; }
+      .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+      .sub { font-size: 12px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .cand { display: flex; gap: 6px; align-items: center; margin-top: 6px; background: var(--panel); border-radius: 6px; padding: 5px 7px; }
+      .cand .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+      .cand button { padding: 3px 8px; font-size: 11px; }
+      footer { display: flex; justify-content: space-between; padding: 8px 14px; }
+      #msg { min-height: 1em; font-size: 12px; margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>DJ Track Hunter</h1>
+      <a href="#" id="open-options">Settings</a>
+    </header>
+    <section>
+      <div class="row">
+        <input id="url" type="url" placeholder="Paste a SoundCloud track or set link" />
+        <button id="hunt">Hunt</button>
+      </div>
+      <div id="msg" class="muted"></div>
+    </section>
+    <section class="row">
+      <span id="want-count" class="muted">Wantlist: …</span>
+      <span style="flex: 1"></span>
+      <button id="recheck" class="secondary">Re-check now</button>
+    </section>
+    <ul id="history"></ul>
+    <footer>
+      <span class="muted" id="hint">Shortcut: Alt+Shift+D on soundcloud.com</span>
+      <a href="#" id="clear">Clear history</a>
+    </footer>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

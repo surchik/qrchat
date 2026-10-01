@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "DJ Track Hunter",
+  "short_name": "Track Hunter",
+  "version": "0.1.0",
+  "description": "One click on a SoundCloud track: download it from your DJDelivery pool, or find an artist-sanctioned free download, or add it to your Bandcamp cart.",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "storage",
+    "downloads",
+    "cookies",
+    "scripting",
+    "contextMenus",
+    "notifications",
+    "alarms",
+    "offscreen",
+    "webRequest"
+  ],
+  "host_permissions": [
+    "https://soundcloud.com/*",
+    "https://*.soundcloud.com/*",
+    "https://*.sndcdn.com/*",
+    "https://djdelivery.com/*",
+    "https://*.djdelivery.com/*",
+    "https://bandcamp.com/*",
+    "https://*.bandcamp.com/*",
+    "https://*.bcbits.com/*"
+  ],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "background": {
+    "service_worker": "src/background/sw.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://soundcloud.com/*"],
+      "js": ["src/content/soundcloud.js"],
+      "css": ["src/content/soundcloud.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "DJ Track Hunter",
+    "default_popup": "src/ui/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png"
+    }
+  },
+  "options_page": "src/ui/options.html",
+  "commands": {
+    "hunt-current": {
+      "suggested_key": { "default": "Alt+Shift+D" },
+      "description": "Hunt the SoundCloud track that's playing (or open)"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

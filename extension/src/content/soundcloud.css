@@ -1,0 +1,32 @@
+/* Inline "hunt" buttons injected next to SoundCloud's own action buttons. */
+.djh-btn {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin: 0 0 0 6px;
+  padding: 0;
+  border: 1px solid #c4b5fd;
+  border-radius: 6px;
+  background: #fff;
+  color: #6d28d9;
+  cursor: pointer;
+  vertical-align: middle;
+  flex: none;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.djh-btn:hover { background: #7c3aed; border-color: #7c3aed; color: #fff; }
+.djh-btn svg { pointer-events: none; }
+.djh-btn.djh-player { width: 22px; height: 22px; margin-left: 8px; }
+
+.djh-btn[data-state="busy"] { color: #fff; background: #a78bfa; border-color: #a78bfa; animation: djh-pulse 1s infinite; }
+.djh-btn[data-state="done"] { color: #fff; background: #16a34a; border-color: #16a34a; }
+.djh-btn[data-state="gate"],
+.djh-btn[data-state="link"] { color: #fff; background: #0284c7; border-color: #0284c7; }
+.djh-btn[data-state="cart"] { color: #fff; background: #d97706; border-color: #d97706; }
+.djh-btn[data-state="review"] { color: #fff; background: #ea580c; border-color: #ea580c; }
+.djh-btn[data-state="want"] { color: #fff; background: #9333ea; border-color: #9333ea; }
+.djh-btn[data-state="error"] { color: #fff; background: #dc2626; border-color: #dc2626; }
+
+@keyframes djh-pulse { 50% { opacity: 0.45; } }

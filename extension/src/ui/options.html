@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>DJ Track Hunter settings</title>
+    <link rel="stylesheet" href="common.css" />
+    <style>
+      body { max-width: 920px; margin: 0 auto; padding: 24px 16px 80px; }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+      .card { border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+      .card > p { margin-top: 0; }
+      .grid { display: grid; grid-template-columns: 220px 1fr; gap: 8px 14px; align-items: start; }
+      .grid label { padding-top: 6px; font-weight: 600; }
+      .grid input[type="checkbox"] { justify-self: start; margin-top: 8px; }
+      .grid .help { grid-column: 2; margin-top: -4px; font-size: 12px; color: var(--muted); }
+      .sub { grid-column: 1 / -1; margin: 10px 0 2px; font-weight: 700; color: var(--muted); text-transform: uppercase; font-size: 11px; letter-spacing: 0.04em; }
+      .sources li { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+      .sources ul { list-style: none; margin: 0; padding: 0; }
+      .sources .name { flex: 1; }
+      .sources button { padding: 2px 8px; }
+      table { border-collapse: collapse; width: 100%; font-size: 12px; }
+      th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+      td.url { word-break: break-all; font-family: ui-monospace, Menlo, monospace; }
+      .bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg); border-top: 1px solid var(--border); padding: 10px 16px; display: flex; gap: 8px; justify-content: center; align-items: center; }
+      #status { min-width: 220px; }
+      .row { display: flex; gap: 8px; align-items: center; }
+      .scroll { max-height: 360px; overflow: auto; }
+      @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } .grid .help { grid-column: 1; } }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>DJ Track Hunter: settings</h1>
+      <span class="muted">v<span id="ver"></span></span>
+    </header>
+
+    <div class="card sources">
+      <h2>Search order</h2>
+      <p class="muted">Sources are tried top to bottom. The first confident match is acted on (download, open free gate, or add to cart).</p>
+      <ul id="sources"></ul>
+    </div>
+
+    <div class="card"><div class="grid" id="form-general"></div></div>
+
+    <div class="card">
+      <h2>DJDelivery</h2>
+      <p class="muted">
+        I couldn't inspect DJDelivery while building this, so it's configured here instead of hard-coded.
+        Fastest path: turn on <b>Discovery</b> below, search for one track on DJDelivery and download it, then use the
+        request log to fill in the search URL and the download link. If its search returns JSON, paste a response into
+        <b>Auto-map JSON</b>.
+      </p>
+      <div class="grid" id="form-pool"></div>
+      <div class="row" style="margin-top: 12px">
+        <button id="grant" class="secondary">Grant access to this domain</button>
+        <span class="muted" id="grant-status"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Test DJDelivery search</h2>
+      <div class="row">
+        <input id="test-q" placeholder="Artist - Title (as you'd see it on SoundCloud)" />
+        <button id="test-run">Search</button>
+      </div>
+      <p class="muted" id="test-status"></p>
+      <div class="scroll"><table id="test-table"></table></div>
+    </div>
+
+    <div class="card">
+      <h2>Auto-map JSON</h2>
+      <p class="muted">Paste one search response from DJDelivery (DevTools → Network → the search request → Response). This fills in the JSON paths.</p>
+      <textarea id="json-sample" rows="6" placeholder='{"data": {"tracks": [{"id": 1, "title": "...", "artist": "...", "version": "Extended Mix"}]}}'></textarea>
+      <div class="row" style="margin-top: 8px"><button id="json-map">Detect mapping</button><span class="muted" id="json-status"></span></div>
+    </div>
+
+    <div class="card">
+      <h2>Discovery log</h2>
+      <p class="muted">With discovery on, requests made by DJDelivery pages are logged here: method, URL, status and type only. No bodies, cookies or headers are stored.</p>
+      <div class="row"><button id="disc-refresh" class="secondary">Refresh</button><button id="disc-copy" class="secondary">Copy as JSON</button><button id="disc-clear" class="secondary">Clear</button></div>
+      <div class="scroll" style="margin-top: 8px"><table id="disc-table"></table></div>
+    </div>
+
+    <div class="card"><div class="grid" id="form-more"></div></div>
+
+    <div class="card">
+      <h2>Backup</h2>
+      <div class="row">
+        <button id="export" class="secondary">Export settings</button>
+        <button id="import" class="secondary">Import settings</button>
+        <button id="export-history" class="secondary">Export history (CSV)</button>
+        <button id="reset" class="secondary">Reset to defaults</button>
+        <input id="import-file" type="file" accept="application/json" hidden />
+      </div>
+    </div>
+
+    <div class="bar"><span id="status" class="muted"></span><button id="save">Save settings</button></div>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>
