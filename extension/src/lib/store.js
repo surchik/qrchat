@@ -78,7 +78,10 @@ export async function statusForUrls(urls) {
 }
 
 export async function findOwned(scUrl, scId) {
-  return (await read('history')).find((h) => (h.scUrl === scUrl || (scId && h.scId === scId)) && (h.status === 'downloaded' || h.status === 'downloading')) || null;
+  // 'downloading' only counts while fresh: a download lost to a browser restart must not
+  // make the track look owned forever.
+  const fresh = (h) => h.status === 'downloaded' || (h.status === 'downloading' && Date.now() - (h.updatedAt || h.at) < 60 * 60 * 1000);
+  return (await read('history')).find((h) => (h.scUrl === scUrl || (scId && h.scId === scId)) && fresh(h)) || null;
 }
 
 export function addWant(item) {

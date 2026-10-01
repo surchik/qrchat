@@ -1,14 +1,15 @@
 {
   "name": "dj-track-hunter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Chrome extension: one click on SoundCloud -> download from your DJDelivery pool, or find a legit free download, or add to Bandcamp cart.",
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "test:e2e": "node tests/e2e/run-e2e.mjs",
+    "test:e2e": "node tests/e2e/run-e2e.mjs && node tests/e2e/gates-e2e.mjs && node tests/e2e/robustness-e2e.mjs",
     "icons": "node scripts/make-icons.mjs",
-    "zip": "cd extension && zip -r ../dj-track-hunter.zip . -x '*.DS_Store'"
+    "zip": "cd extension && zip -r ../dj-track-hunter.zip . -x '*.DS_Store'",
+    "test:all": "npm test && npm run test:e2e"
   },
   "engines": {
     "node": ">=20"

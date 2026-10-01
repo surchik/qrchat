@@ -56,7 +56,7 @@ async function render() {
     if (e.status === 'review') {
       for (const c of e.candidates || []) {
         li.append(h('div', { class: 'cand' },
-          h('span', { class: 't', title: `${c.artist} - ${c.title} ${c.version || ''}` }, `${Math.round(c.score * 100)}% · ${c.sourceLabel} · ${c.artist ? `${c.artist} - ` : ''}${c.title}${c.version ? ` (${c.version})` : ''}`),
+          h('span', { class: 't', title: `${c.artist ? `${c.artist} - ` : ''}${c.title}${c.version ? ` (${c.version})` : ''}` }, `${Math.round(c.score * 100)}% · ${c.sourceLabel} · ${c.artist ? `${c.artist} - ` : ''}${c.title}${c.version ? ` (${c.version})` : ''}`),
           h('button', {
             onclick: async (ev) => {
               ev.target.disabled = true;
@@ -74,7 +74,8 @@ async function render() {
   }
 }
 
-$('#hunt').addEventListener('click', async () => {
+$('#hunt-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
   const url = $('#url').value.trim();
   if (!url) return;
   $('#msg').textContent = 'Hunting… progress shows below.';

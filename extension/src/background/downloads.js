@@ -84,13 +84,90 @@ export async function startDownload({ url, baseName, folder, entryId, tabId, hea
   return id;
 }
 
-/** Expect the user to finish a gate in another tab; claim the next matching audio download. */
-export async function registerCapture({ entryId, baseName, folder, hosts, tabId, ttlMs = 20 * 60 * 1000 }) {
+/**
+ * Expect a gate to produce a download. `gateTabIds` are the tab(s) showing the gate; tabs the
+ * gate opens later (OAuth popups, Dropbox pages) are added via addGateTab().
+ */
+export async function registerCapture({ entryId, baseName, folder, hosts, tabId, gateTabIds = [], label = '', batchId = null, ttlMs = 30 * 60 * 1000 }) {
   await load();
   const now = Date.now();
   state.captures = state.captures.filter((c) => c.expires > now && c.entryId !== entryId);
-  state.captures.push({ entryId, baseName, folder, hosts: hosts.filter(Boolean), tabId, expires: now + ttlMs });
+  state.captures.push({ entryId, baseName, folder, label, batchId, hosts: hosts.filter(Boolean), tabId, gateTabIds, armedAt: 0, expires: now + ttlMs });
   await save();
+}
+
+export async function captureForTab(tabId) {
+  await load();
+  const now = Date.now();
+  return state.captures.find((c) => c.expires > now && c.gateTabIds.includes(tabId)) || null;
+}
+
+/** A tab opened by a gate tab (popup, new tab) belongs to the same gate. */
+export async function addGateTab(openerTabId, tabId) {
+  const cap = await captureForTab(openerTabId);
+  if (!cap || cap.gateTabIds.includes(tabId)) return false;
+  cap.gateTabIds.push(tabId);
+  await save();
+  return true;
+}
+
+/** The gate page reports a click on a download-ish control: the next download is probably this gate's. */
+export async function armCapture(tabId) {
+  const cap = await captureForTab(tabId);
+  if (!cap) return;
+  cap.armedAt = Date.now();
+  await save();
+}
+
+export async function dropCapture(entryId) {
+  await load();
+  state.captures = state.captures.filter((c) => c.entryId !== entryId);
+  await save();
+}
+
+export async function liveCaptures() {
+  await load();
+  const now = Date.now();
+  return state.captures.filter((c) => c.expires > now);
+}
+
+function stripHash(u) {
+  return String(u || '').split('#')[0];
+}
+
+async function tabUrls(ids) {
+  const out = [];
+  for (const id of ids) {
+    try {
+      const t = await chrome.tabs.get(id);
+      if (t?.url) out.push(stripHash(t.url));
+      if (t?.pendingUrl) out.push(stripHash(t.pendingUrl));
+    } catch {
+      // tab closed
+    }
+  }
+  return out;
+}
+
+/**
+ * Which pending gate does this download belong to? Most specific evidence first; when the
+ * evidence is ambiguous we return null rather than mislabel someone else's file.
+ */
+async function matchCapture(item, live) {
+  const referrer = stripHash(item.referrer);
+  if (referrer) {
+    for (const c of live) {
+      if ((await tabUrls(c.gateTabIds)).includes(referrer)) return c;
+    }
+  }
+  const now = Date.now();
+  const armed = live.filter((c) => c.armedAt && now - c.armedAt < 90 * 1000).sort((a, b) => b.armedAt - a.armedAt);
+  if (armed.length === 1 || (armed.length > 1 && armed[0].armedAt - armed[1].armedAt > 2000)) return armed[0];
+  const seen = [item.referrer, item.url, item.finalUrl].map(hostOf).filter(Boolean);
+  const hostHits = live.filter((c) => c.hosts.some((h) => seen.some((x) => x === h || x.endsWith(`.${h}`))));
+  if (hostHits.length === 1) return hostHits[0];
+  // No evidence linking this file to a gate: leave it alone (it's probably an unrelated download).
+  return null;
 }
 
 async function metaFor(item) {
@@ -102,18 +179,23 @@ async function metaFor(item) {
     await save();
     return direct;
   }
+  if (item.byExtensionId) return null;
   const now = Date.now();
   const live = state.captures.filter((c) => c.expires > now);
   if (!live.length) return null;
   if (!AUDIO_EXT.has(chooseExt(item))) return null;
-  const seen = [item.referrer, item.url, item.finalUrl].map(hostOf).filter(Boolean);
-  const hostHit = (c) => c.hosts.some((h) => seen.some((x) => x === h || x.endsWith(`.${h}`)));
-  // Newest capture whose gate host matches; with exactly one pending gate, take any audio file.
-  let cap = [...live].reverse().find(hostHit);
-  if (!cap && live.length === 1) [cap] = live;
+  const cap = await matchCapture(item, live);
   if (!cap) return null;
   state.captures = state.captures.filter((c) => c !== cap);
-  const meta = { entryId: cap.entryId, baseName: cap.baseName, folder: cap.folder, tabId: cap.tabId, captured: true };
+  const meta = {
+    entryId: cap.entryId,
+    baseName: cap.baseName,
+    folder: cap.folder,
+    tabId: cap.tabId,
+    gateTabIds: cap.gateTabIds,
+    batchId: cap.batchId,
+    captured: true,
+  };
   state.byId[item.id] = meta;
   await save();
   return meta;

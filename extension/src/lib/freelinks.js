@@ -2,7 +2,7 @@
 // Pure; unit tested.
 
 const URL_RE = /\bhttps?:\/\/[^\s<>"'`)\]]+/gi;
-const BARE_RE = /(?:^|[\s(])((?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|io|co|to|ee|it|nz|tl|link)\/[^\s<>"'`)\]]+)/gi;
+const BARE_RE = /(?:^|[\s(:])((?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|io|co|to|ee|it|nz|tl|link|ly)\/[^\s<>"'`)\]]+)/gi;
 const FREE_LABEL_RE = /\bfree\b|\bgratis\b|\bdescarga\b|\bdownload\b|\bdl\b|\bwav\b/i;
 
 export function hostOf(u) {
@@ -36,31 +36,34 @@ function trimUrl(u) {
 export function findTrackLinks(track, freeDomains) {
   const out = [];
   const seen = new Set();
-  const add = (rawUrl, from, labelledFree) => {
+  const add = (rawUrl, from, labelledFree, line = '') => {
     const url = trimUrl(/^https?:/i.test(rawUrl) ? rawUrl : `https://${rawUrl}`);
     const host = hostOf(url);
     if (!host || seen.has(url) || /(^|\.)soundcloud\.com$/.test(host) || host === 'on.soundcloud.com') return;
     seen.add(url);
-    out.push({ url, host, kind: classifyHost(host, freeDomains) || 'other', from, labelledFree });
+    out.push({ url, host, kind: classifyHost(host, freeDomains) || 'other', from, labelledFree, line });
   };
 
   if (track?.purchase_url) {
     add(track.purchase_url, 'purchase_url', FREE_LABEL_RE.test(track.purchase_title || ''));
   }
   const desc = String(track?.description || '');
-  for (const m of desc.matchAll(URL_RE)) add(m[0], 'description', lineSaysFree(desc, m.index));
+  for (const m of desc.matchAll(URL_RE)) add(m[0], 'description', lineSaysFree(desc, m.index), lineAt(desc, m.index));
   for (const m of desc.matchAll(BARE_RE)) {
     const candidate = m[1];
-    if (![...seen].some((s) => s.includes(candidate))) add(candidate, 'description', lineSaysFree(desc, m.index));
+    if (![...seen].some((s) => s.includes(candidate))) add(candidate, 'description', lineSaysFree(desc, m.index), lineAt(desc, m.index));
   }
   return out;
 }
 
-function lineSaysFree(text, index) {
+function lineAt(text, index) {
   const start = text.lastIndexOf('\n', index) + 1;
   const end = text.indexOf('\n', index);
-  const line = text.slice(start, end < 0 ? undefined : end);
-  return FREE_LABEL_RE.test(line.replace(URL_RE, ''));
+  return text.slice(start, end < 0 ? undefined : end);
+}
+
+function lineSaysFree(text, index) {
+  return FREE_LABEL_RE.test(lineAt(text, index).replace(URL_RE, ''));
 }
 
 /** Whether a link is worth opening automatically (vs. listing for review). */

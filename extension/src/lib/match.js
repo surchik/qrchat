@@ -58,23 +58,39 @@ export function containment(needle, hay) {
 }
 
 /**
- * Artist similarity. Pools often list "A, B & C feat. D" where SoundCloud shows only "A",
- * or the reverse, so we take the best of whole-string similarity and per-artist containment.
+ * Artist similarity. Pools often list "A, B & C feat. D" where SoundCloud shows only "A", or the
+ * reverse. A name only counts as matched when the whole name matches (so "Eric" is not
+ * "Eric Prydz" and "Chase Atlantic" is not "Chase & Status").
  */
 export function artistSim(qArtist, cArtist, cTitle = '') {
-  if (!normalizeText(qArtist) || !normalizeText(cArtist)) return normalizeText(qArtist) ? 0.3 : 0.5;
+  if (!normalizeText(qArtist)) return 0.4; // unknown artist: never enough for an auto match
+  if (!normalizeText(cArtist)) return 0.3;
   const whole = textSim(qArtist, cArtist);
   const qNames = splitArtists(qArtist);
   const cNames = splitArtists(cArtist);
-  let best = 0;
-  for (const q of qNames) for (const c of cNames) best = Math.max(best, textSim(q, c));
-  // The query's main artist fully contained in the candidate's credits (or title, for feats).
-  const contained = containment(qNames[0] || qArtist, `${cArtist} ${cTitle}`);
-  const reverse = containment(cNames[0] || cArtist, qArtist);
-  return Math.max(whole, best * 0.97, contained * 0.95, reverse * 0.9);
+  const named = (a, list) => list.some((b) => textSim(a, b) >= 0.85);
+  const qCovered = qNames.filter((n) => named(n, cNames) || containment(n, cTitle) === 1).length / (qNames.length || 1);
+  const cCovered = cNames.filter((n) => named(n, qNames)).length / (cNames.length || 1);
+  // The query's main artist credited alongside others (or as a feat. in the title).
+  const mainCredited = qNames.length && (named(qNames[0], cNames) || containment(qNames[0], cTitle) === 1);
+  return Math.max(whole, 0.97 * qCovered, mainCredited ? 0.9 : 0, cCovered === 1 ? 0.85 : 0);
 }
 
-const POOL_FLAVOURS = new Set(['original', 'extended', 'radio', '']);
+/** "clean" / "dirty" pool flavour named in a mix, or ''. */
+export function flavourOf(text) {
+  const t = normalizeText(text);
+  if (/\bclean\b/.test(t)) return 'clean';
+  if (/\b(dirty|explicit)\b/.test(t)) return 'dirty';
+  return '';
+}
+
+const PLAIN = new Set(['', 'original', 'extended', 'radio']);
+const SPECIAL = new Set(['acapella', 'instrumental']);
+
+function remixersExcluding(mix, artist) {
+  const main = splitArtists(artist).map(normalizeText);
+  return extractRemixers(mix).filter((r) => !main.includes(normalizeText(r)) && !/^\d+$/.test(normalizeText(r)));
+}
 
 /**
  * How compatible the candidate's version is with the one the user wants.
@@ -82,35 +98,50 @@ const POOL_FLAVOURS = new Set(['original', 'extended', 'radio', '']);
  */
 export function versionCompat(q, cand) {
   const qKind = classifyMix(q.mix);
-  const qRemixers = q.remixers?.length ? q.remixers : extractRemixers(q.mix);
+  const qRemixers = remixersExcluding(q.mix, q.artist);
   const cMix = cand.mix || '';
   const cKind = classifyMix(cMix);
-  const cRemixers = extractRemixers(cMix);
+  const cRemixers = remixersExcluding(cMix, cand.artist || q.artist);
   const cText = `${cand.title} ${cMix}`;
+  const qFlav = flavourOf(q.mix);
+  const cFlav = flavourOf(cMix);
+
+  // An acapella / instrumental is never a substitute for the full track (and vice versa).
+  if (SPECIAL.has(cKind) !== SPECIAL.has(qKind) || (SPECIAL.has(cKind) && cKind !== qKind)) {
+    return { score: 0.4, penalty: 0.7, reason: `candidate is ${cKind || 'the full track'}` };
+  }
+  if (qFlav && cFlav && qFlav !== cFlav) return { score: 0.5, penalty: 0.8, reason: `wanted ${qFlav}, found ${cFlav}` };
 
   if (qRemixers.length) {
     const want = qRemixers.join(' ');
     const overlap = cRemixers.length ? Math.max(containment(want, cRemixers.join(' ')), containment(cRemixers.join(' '), want)) : 0;
-    if (overlap >= 0.6) return { score: 1, penalty: 1, reason: 'same remixer' };
-    if (containment(want, cText) >= 0.6) return { score: 0.9, penalty: 1, reason: 'remixer named in title' };
+    const named = overlap >= 0.6 || containment(want, cText) >= 0.6;
+    if (named) {
+      // Same remixer, but a Dub / Edit is not the Remix you asked for.
+      const sameKind = cKind === qKind || (PLAIN.has(cKind) && qKind === 'remix');
+      if (sameKind) return { score: overlap >= 0.6 ? 1 : 0.9, penalty: 1, reason: 'same remixer' };
+      return { score: 0.6, penalty: 0.8, reason: `same remixer, but ${cKind || 'original'} instead of ${qKind}` };
+    }
     if (cRemixers.length) return { score: 0.1, penalty: 0.45, reason: 'different remixer' };
-    return { score: 0.25, penalty: 0.6, reason: 'wanted a remix, found the original' };
+    // Offered for review (you may take the original), never auto-picked.
+    return { score: 0.3, penalty: 0.66, reason: 'wanted a remix, found the original' };
   }
 
-  if (['vip', 'bootleg', 'edit', 'dub'].includes(qKind)) {
-    if (cKind === qKind) return { score: 1, penalty: 1, reason: `same ${qKind}` };
+  // Specific kinds without a name: "(Remix)", "(VIP)", "(Live …)", "(Cover)", "(Dub)", "(Edit)".
+  if (!PLAIN.has(qKind)) {
+    if (cKind === qKind && !cRemixers.length) return { score: 1, penalty: 1, reason: `same ${qKind}` };
     return { score: 0.5, penalty: 0.75, reason: `wanted ${qKind}, found ${cKind || 'original'}` };
   }
 
-  if (cRemixers.length) return { score: 0.2, penalty: 0.55, reason: 'candidate is a remix' };
-  if (['acapella', 'instrumental'].includes(cKind) && !['acapella', 'instrumental'].includes(qKind)) {
-    return { score: 0.5, penalty: 0.8, reason: `candidate is ${cKind}` };
+  // The user wants the original (any plain flavour).
+  if (cRemixers.length || cKind === 'remix') return { score: 0.2, penalty: 0.55, reason: 'candidate is a remix' };
+  if (['vip', 'bootleg', 'dub', 'live', 'cover'].includes(cKind)) return { score: 0.5, penalty: 0.75, reason: `candidate is ${cKind}` };
+  if (cKind === 'other') return { score: 0.6, penalty: 0.85, reason: `candidate is “${cMix}”` };
+  // Explicit Extended/Original asked for, but this is an edit (radio or otherwise).
+  if ((qKind === 'extended' || qKind === 'original') && (cKind === 'radio' || cKind === 'edit')) {
+    return { score: 0.6, penalty: 0.85, reason: `wanted ${qKind}, found ${cKind}` };
   }
-  if (['vip', 'bootleg', 'dub', 'live'].includes(cKind)) return { score: 0.5, penalty: 0.75, reason: `candidate is ${cKind}` };
-  if (POOL_FLAVOURS.has(qKind) && (POOL_FLAVOURS.has(cKind) || cKind === 'edit' || cKind === 'other')) {
-    return { score: qKind === cKind || !qKind || !cKind ? 1 : 0.9, penalty: 1, reason: 'compatible version' };
-  }
-  return { score: 0.8, penalty: 1, reason: 'version unclear' };
+  return { score: qKind === cKind || !qKind || !cKind ? 1 : 0.9, penalty: 1, reason: 'compatible version' };
 }
 
 /** Normalize a candidate row from any source into {artist,title,mix}. */
@@ -118,6 +149,40 @@ export function normalizeCandidate(c) {
   const parts = splitTitleMix(c.title || '');
   const mix = [c.version, parts.mix].filter(Boolean).join(' ').trim();
   return { artist: c.artist || '', title: parts.title || c.title || '', mix, isrc: c.isrc || '', durationSec: c.durationSec ?? null };
+}
+
+const stripParens = (t) => String(t || '').replace(/[([][^()[\]]*[)\]]/g, ' ').replace(/\s+/g, ' ').trim();
+
+/** Best title similarity over parenthesis-free variants ("(It Goes Like) Nanana" vs "Nanana"). */
+function titleSim(qTitle, cTitle) {
+  let best = textSim(qTitle, cTitle);
+  const qa = stripParens(qTitle);
+  const ca = stripParens(cTitle);
+  if (qa && qa !== qTitle) best = Math.max(best, 0.97 * textSim(qa, cTitle));
+  if (ca && ca !== cTitle) best = Math.max(best, 0.97 * textSim(qTitle, ca));
+  return best;
+}
+
+function scoreOne(q, cand) {
+  const title = titleSim(q.title, cand.title);
+  const artist = artistSim(q.artist, cand.artist, cand.title);
+  const version = versionCompat(q, cand);
+  let score = (0.45 * title + 0.35 * artist + 0.2 * version.score) * version.penalty;
+  if (q.durationSec && cand.durationSec && title >= 0.8 && artist >= 0.8 && Math.abs(q.durationSec - cand.durationSec) <= 3) score += 0.03;
+  // Guards: a weak title or artist can't be rescued by the other parts.
+  if (title < 0.5) score = Math.min(score, 0.5);
+  if (artist < 0.7) score = Math.min(score, 0.75);
+  // "Glue" vs "Glue 2", "Praise You" vs "Praise You 2024": different words, different song.
+  const qt = new Set(tokens(stripParens(q.title) || q.title));
+  const ct = new Set(tokens(stripParens(cand.title) || cand.title));
+  const extra = [...qt].filter((t) => !ct.has(t)).length + [...ct].filter((t) => !qt.has(t)).length;
+  if (extra && title < 0.97) score = Math.min(score, 0.8);
+  score = Math.max(0, Math.min(1, score));
+  let reason = version.reason;
+  if (title < 0.5) reason = 'different title';
+  else if (artist < 0.7) reason = 'different artist';
+  else if (extra && title < 0.97) reason = 'title differs';
+  return { score: Math.round(score * 1000) / 1000, parts: { title, artist, version: version.score }, reason };
 }
 
 /**
@@ -130,29 +195,19 @@ export function scoreCandidate(q, rawCand) {
   if (q.isrc && c.isrc && q.isrc.toUpperCase() === c.isrc.toUpperCase()) {
     return { score: 0.99, parts: { isrc: 1 }, reason: 'ISRC match' };
   }
-  // Some rows put the whole "Artist - Title" in the title column.
-  let cand = c;
-  if (!normalizeText(c.artist) && /\s[-–—]\s/.test(c.title)) {
+  const variants = [c];
+  // Rows that put "Artist - Title" in the title column (with or without a label as artist).
+  if (/\s[-–—]\s/.test(c.title)) {
     const [a, ...rest] = c.title.split(/\s[-–—]\s/);
-    cand = { ...c, artist: a, title: rest.join(' - ') };
+    variants.push({ ...c, artist: a, title: rest.join(' - ') });
   }
-  const title = textSim(q.title, cand.title);
-  const artist = artistSim(q.artist, cand.artist, cand.title);
-  const version = versionCompat(q, cand);
-  let score = (0.45 * title + 0.35 * artist + 0.2 * version.score) * version.penalty;
-  if (q.durationSec && cand.durationSec && Math.abs(q.durationSec - cand.durationSec) <= 3) score += 0.03;
-  // A title that barely matches can't be rescued by a perfect artist match.
-  if (title < 0.5) score = Math.min(score, 0.5);
-  score = Math.max(0, Math.min(1, score));
-  let reason = version.reason;
-  if (title < 0.5) reason = 'different title';
-  else if (artist < 0.5) reason = 'different artist';
-  return { score: Math.round(score * 1000) / 1000, parts: { title, artist, version: version.score }, reason };
+  return variants.map((v) => scoreOne(q, v)).sort((x, y) => y.score - x.score)[0];
 }
 
 /**
- * Among rows that are the same song (scores within `window` of the best), put the user's
- * preferred pool version first ("Extended" before "Clean", "Acapella" last, ...).
+ * Among rows that are the same song (scores within `window` of the best), put the version the
+ * user asked for first, then their preferred pool version ("Extended" before "Clean",
+ * "Acapella" last, ...).
  */
 export function orderByVersionPreference(scored, { prefer = [], avoid = [] } = {}, queryMix = '', window = 0.04) {
   if (!scored.length) return scored;
@@ -161,15 +216,22 @@ export function orderByVersionPreference(scored, { prefer = [], avoid = [] } = {
   const cluster = sorted.filter((s) => top - s.score <= window);
   const rest = sorted.filter((s) => top - s.score > window);
   const qm = normalizeText(queryMix);
+  const qKind = classifyMix(queryMix);
+  const qFlav = flavourOf(queryMix);
   const rank = (s) => {
-    const v = normalizeText(`${s.version || ''} ${splitTitleMix(s.title || '').mix}`);
+    const mixText = `${s.version || ''} ${splitTitleMix(s.title || '').mix}`;
+    const v = normalizeText(mixText);
+    // Explicitly requested version wins: exact text, else same kind and flavour.
+    let exact = 2;
+    if (qm && v === qm) exact = 0;
+    else if (qm && classifyMix(mixText) === qKind && flavourOf(mixText) === qFlav) exact = 1;
     const avoided = avoid.some((w) => {
       const n = normalizeText(w);
       return n && v.includes(n) && !qm.includes(n);
     });
     let idx = prefer.findIndex((w) => normalizeText(w) && v.includes(normalizeText(w)));
     if (idx < 0) idx = prefer.length;
-    return (avoided ? 1000 : 0) + idx;
+    return (avoided ? 10000 : 0) + exact * 100 + idx;
   };
   cluster.sort((a, b) => rank(a) - rank(b) || b.score - a.score);
   return cluster.concat(rest);

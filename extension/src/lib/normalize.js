@@ -6,7 +6,8 @@ const VERSION_WORDS = [
   'dub', 'refix', 'version', 'extended', 'original', 'radio', 'club', 'instrumental', 'acapella',
   'a cappella', 'acappella', 'intro', 'outro', 'clean', 'dirty', 'redrum', 'cover', 'mashup',
   'blend', 'reprise', 'remaster', 'remastered', 'live', 'quick hit', 'transition', 'hype', 'short',
-  'main', 'explicit', 'redo', 'retouch', 'reconstruction', 'interpretation',
+  'main', 'explicit', 'redo', 'retouch', 'reconstruction', 'interpretation', 'sped up', 'slowed',
+  'nightcore', 'karaoke', 'reverb',
 ];
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -17,7 +18,7 @@ const VERSION_RE = new RegExp(`(?:^|[^\\p{L}\\p{N}])(?:${VERSION_WORDS.map(escap
 const NOISE_GROUP_RE = /^(?:free\b|free\s*(?:dl|d\/l|download)|out\s*now|premiere|exclusive|preview|teaser|snippet|clip|buy\b|support(?:ed)?\s+by|played\s+by|forthcoming|coming\s+soon|tiktok|viral|hq\b|hd\b|\d{4}$|official|audio\b|video\b|visuali[sz]er|lyrics?\b|click\s+buy|download\s+link|link\s+in|\*+$)/i;
 
 const PREFIX_NOISE_RE = /^\s*(?:[[(]?\s*(?:premiere|exclusive|free\s*(?:dl|d\/l|download)|out\s*now|preview|new|world\s+premiere)\s*[\])]?\s*(?:[:|\-–—]\s*|\s+(?=[[(])))+/i;
-const TRAILING_NOISE_RE = /\s*[|*~!]*\s*(?:free\s*(?:dl|d\/l|download)|out\s*now|buy\s*=\s*free\s*(?:dl|download)?)\s*[|*~!]*\s*$/i;
+const TRAILING_NOISE_RE = /\s*[|*~!/]*\s*(?:free\s*(?:dl|d\/l|download)|out\s*now|buy\s*=\s*free\s*(?:dl|download)?)\s*[|*~!]*\s*$/i;
 const LEADING_FREE_RE = /^\s*[|*~!]*\s*free\s*(?:dl|d\/l|download)\s*[|*~!:]*\s*/i;
 const HASHTAG_RE = /(^|\s)#[\p{L}\p{N}_]+/gu;
 const FEAT_RE = /[([]?\s*\b(?:feat\.?|ft\.?|featuring)\s+([^()[\]]+?)\s*(?:[)\]]|$|(?=\s[-–—]\s))/i;
@@ -89,13 +90,14 @@ export function classifyMix(mix) {
   if (/\b(acapella|a cappella|acappella)\b/.test(t)) return 'acapella';
   if (/\binstrumental\b/.test(t)) return 'instrumental';
   if (/\bvip\b/.test(t)) return 'vip';
-  if (/\b(bootleg|flip|mashup|blend)\b/.test(t)) return 'bootleg';
+  if (/\b(cover|karaoke|sped up|slowed|nightcore|reverb)\b/.test(t)) return 'cover';
+  if (/\b(bootleg|flip|mashup|blend|redrum)\b/.test(t)) return 'bootleg';
   if (/\b(remix|rmx|rework|re work|refix|reconstruction|interpretation|redo|retouch)\b/.test(t)) return 'remix';
   if (/\bdub\b/.test(t)) return 'dub';
   if (/\blive\b/.test(t)) return 'live';
   if (/\bextended\b/.test(t)) return 'extended';
   if (/\bradio\b/.test(t)) return 'radio';
-  if (/\b(original|main|club)\b/.test(t)) return 'original';
+  if (/\b(original|main|club|remaster|remastered)\b/.test(t)) return 'original';
   if (/\b(edit|re edit|reedit)\b/.test(t)) return 'edit';
   if (/\b(clean|dirty|intro|outro|explicit|quick hit|hype|transition|short)\b/.test(t)) return 'original';
   return 'other';
@@ -112,7 +114,7 @@ export function extractRemixers(mix) {
     .map((name) => name.replace(/['’]s$/i, '').trim())
     .filter((name) => {
       const toks = tokens(name, { keepStop: true });
-      return toks.length && !toks.every((t) => GENERIC_MIX_WORDS.has(t));
+      return toks.length && !toks.every((t) => GENERIC_MIX_WORDS.has(t) || /^\d+$/.test(t));
     });
 }
 
@@ -173,11 +175,13 @@ function cleanSpaces(s) {
 /** Strip promo junk from a raw SoundCloud title. */
 export function stripNoise(raw) {
   let t = String(raw || '');
+  t = t.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/gu, ' ');
   t = t.replace(HASHTAG_RE, ' ');
+  t = t.replace(/^\s*\d{1,3}\s*[.)]\s+/, ''); // "01. Artist - Title"
   t = t.replace(PREFIX_NOISE_RE, '');
   t = t.replace(LEADING_FREE_RE, '');
   t = t.replace(TRAILING_NOISE_RE, '');
-  t = t.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, ' ');
+  t = t.replace(/\s+\/{1,2}\s*$/, '');
   return cleanSpaces(t);
 }
 
@@ -195,9 +199,14 @@ export function parseSoundCloudTrack(track) {
   let artist = '';
   let rest = cleaned;
   const split = cleaned.split(ARTIST_TITLE_SPLIT_RE);
+  const quoted = cleaned.match(/^([^"“”]+?)\s+["“]([^"“”]+)["”]\s*(.*)$/);
   if (split.length >= 2 && split[0].trim()) {
     artist = split[0];
     rest = split.slice(1).join(' - ');
+  } else if (quoted) {
+    // FISHER "LOSING IT" style.
+    artist = quoted[1];
+    rest = `${quoted[2]} ${quoted[3]}`.trim();
   } else {
     artist = pub.artist || uploader;
   }

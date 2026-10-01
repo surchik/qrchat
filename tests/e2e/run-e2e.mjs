@@ -137,8 +137,8 @@ const BANDCAMP_TRACK = `<html><head><script data-tralbum="${tralbum.replace(/"/g
   <h2>Rare Groove</h2>
   <h4><button class="download-link buy-link" onclick="document.getElementById('dlg').style.display='block'">Buy Digital Track</button></h4>
   <div id="dlg" style="display:none"><input id="userPrice" value="1.00">
-    <button onclick="document.getElementById('sidecart').style.display='block'">Add to cart</button></div>
-  <div id="sidecart" style="display:none">1 item in cart</div>
+    <button onclick="const c=document.getElementById('sidecart'); c.style.display='block'; c.setAttribute('data-cart-count', String(Number(c.getAttribute('data-cart-count'))+1)); c.textContent=c.getAttribute('data-cart-count')+' item in cart'">Add to cart</button></div>
+  <div id="sidecart" data-cart-count="0" style="display:none"></div>
 </body></html>`;
 
 const SC_PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>SoundCloud mock</title></head><body><div id="app"><main>

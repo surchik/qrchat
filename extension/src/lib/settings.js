@@ -42,7 +42,7 @@ export const DEFAULTS = {
     transport: 'background',
     format: 'html', // 'html' | 'json'
     searchUrl: '', // e.g. https://djdelivery.com/search?q={query}
-    queryTemplates: ['{artist} {title}', '{title}'],
+    queryTemplates: ['{artist} {title}', '{mainartist} {title}', '{title}'],
     loginUrlIncludes: '/login',
     loginSelector: 'input[type="password"]',
     html: { row: '', artist: '', title: '', version: '', id: '', download: '', bpm: '', key: '', genre: '', isrc: '' },
@@ -61,6 +61,14 @@ export const DEFAULTS = {
     hub: ['linktr.ee', 'lnk.to', 'ffm.to', 'smarturl.it', 'distrokid.com', 'beacons.ai'],
     paidstore: ['beatport.com', 'traxsource.com', 'junodownload.com', 'beatsource.com', 'music.apple.com', 'itunes.apple.com', 'amazon.com'],
   },
+  gates: {
+    // 'auto' = banner + fill + click gate steps; 'guide' = banner only; 'off' = just open the tab.
+    mode: 'auto',
+    email: '',
+    comment: '',
+    autoApproveOAuth: true,
+    closeAfterCapture: true,
+  },
   discovery: { enabled: false },
 };
 
@@ -76,13 +84,39 @@ export function deepMerge(base, over) {
   return out;
 }
 
-export async function getSettings() {
-  const { settings } = await chrome.storage.local.get('settings');
-  const merged = deepMerge(structuredClone(DEFAULTS), settings || {});
+/** Merge onto defaults and repair anything malformed (imports, old versions, hand edits). */
+export function normalizeSettings(raw) {
+  const merged = deepMerge(structuredClone(DEFAULTS), isObj(raw) ? raw : {});
+  if (!Array.isArray(merged.sourceOrder)) merged.sourceOrder = [...DEFAULTS.sourceOrder];
+  merged.sourceOrder = merged.sourceOrder.filter((id) => SOURCE_META[id]);
   // New sources added in later versions get appended to a saved order.
   for (const id of Object.keys(SOURCE_META)) if (!merged.sourceOrder.includes(id)) merged.sourceOrder.push(id);
-  merged.sourceOrder = merged.sourceOrder.filter((id) => SOURCE_META[id]);
+  // List fields must be arrays, numbers must be numbers.
+  const fixList = (obj, key, def) => {
+    if (!Array.isArray(obj[key])) obj[key] = typeof obj[key] === 'string' ? obj[key].split('\n').map((x) => x.trim()).filter(Boolean) : [...def];
+  };
+  fixList(merged.djdelivery, 'queryTemplates', DEFAULTS.djdelivery.queryTemplates);
+  fixList(merged.djdelivery, 'versionPrefer', DEFAULTS.djdelivery.versionPrefer);
+  fixList(merged.djdelivery, 'versionAvoid', DEFAULTS.djdelivery.versionAvoid);
+  fixList(merged.wantlist, 'sources', DEFAULTS.wantlist.sources);
+  for (const k of Object.keys(DEFAULTS.freeDomains)) fixList(merged.freeDomains, k, DEFAULTS.freeDomains[k]);
+  const num = (v, def, lo, hi) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : def;
+  };
+  merged.matching.autoThreshold = num(merged.matching.autoThreshold, DEFAULTS.matching.autoThreshold, 0.5, 1);
+  merged.matching.reviewThreshold = num(merged.matching.reviewThreshold, DEFAULTS.matching.reviewThreshold, 0.3, 1);
+  if (merged.matching.reviewThreshold > merged.matching.autoThreshold) merged.matching.reviewThreshold = merged.matching.autoThreshold;
+  merged.wantlist.intervalHours = num(merged.wantlist.intervalHours, DEFAULTS.wantlist.intervalHours, 1, 24 * 14);
+  merged.wantlist.maxPerRun = num(merged.wantlist.maxPerRun, DEFAULTS.wantlist.maxPerRun, 1, 500);
+  merged.djdelivery.minIntervalMs = num(merged.djdelivery.minIntervalMs, DEFAULTS.djdelivery.minIntervalMs, 0, 60000);
+  merged.djdelivery.dailyDownloadCap = num(merged.djdelivery.dailyDownloadCap, DEFAULTS.djdelivery.dailyDownloadCap, 0, 100000);
   return merged;
+}
+
+export async function getSettings() {
+  const { settings } = await chrome.storage.local.get('settings');
+  return normalizeSettings(settings);
 }
 
 export async function saveSettings(settings) {

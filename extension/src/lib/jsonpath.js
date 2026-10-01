@@ -45,20 +45,22 @@ function absolutize(u, baseUrl) {
 export function mapJsonItems(json, cfg, baseUrl) {
   const list = getPath(json, cfg.itemsPath);
   if (!Array.isArray(list)) return [];
+  // An unmapped field is empty, never the whole row (getPath('') returns the object itself).
+  const field = (raw, path) => (path ? asText(getPath(raw, path)) : '');
   return list.slice(0, cfg.maxRows || 50).map((raw, index) => {
     const item = {
       index,
       raw,
-      artist: asText(getPath(raw, cfg.artist)),
-      title: asText(getPath(raw, cfg.title)),
-      version: asText(getPath(raw, cfg.version)),
-      id: asText(getPath(raw, cfg.id)),
-      bpm: asText(getPath(raw, cfg.bpm)),
-      key: asText(getPath(raw, cfg.key)),
-      genre: asText(getPath(raw, cfg.genre)),
-      isrc: asText(getPath(raw, cfg.isrc)),
+      artist: field(raw, cfg.artist),
+      title: field(raw, cfg.title),
+      version: field(raw, cfg.version),
+      id: field(raw, cfg.id),
+      bpm: field(raw, cfg.bpm),
+      key: field(raw, cfg.key),
+      genre: field(raw, cfg.genre),
+      isrc: field(raw, cfg.isrc),
     };
-    item.downloadUrl = absolutize(asText(getPath(raw, cfg.download)), baseUrl);
+    item.downloadUrl = absolutize(field(raw, cfg.download), baseUrl);
     return item;
   }).filter((it) => it.title || it.artist);
 }

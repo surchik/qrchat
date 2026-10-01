@@ -1,4 +1,4 @@
-import { DEFAULTS, SOURCE_META, getSettings, saveSettings, deepMerge } from '../lib/settings.js';
+import { DEFAULTS, SOURCE_META, getSettings, saveSettings, normalizeSettings } from '../lib/settings.js';
 import { getPath, autodetectMapping } from '../lib/jsonpath.js';
 
 const $ = (s) => document.querySelector(s);
@@ -85,6 +85,12 @@ const POOL = [
 ];
 
 const MORE = [
+  { sub: 'Download gates' },
+  { path: 'gates.mode', type: 'select', label: 'Gate autopilot', options: [['auto', 'Auto: fill + click every gate step'], ['guide', 'Guide: banner only, you click'], ['off', 'Off: just open the tab']] },
+  { path: 'gates.email', type: 'text', label: 'Email for gates', help: 'Filled in when a gate asks for an email. Use a dedicated address; gates add you to mailing lists.' },
+  { path: 'gates.comment', type: 'text', label: 'Comment for gates', help: 'Posted when a gate requires a comment. Leave empty to skip comment steps (you type it).' },
+  { path: 'gates.autoApproveOAuth', type: 'bool', label: 'Approve gate logins', help: 'Click Connect/Allow on SoundCloud/Spotify login screens, but only when they send you back to a known gate domain (list below).' },
+  { path: 'gates.closeAfterCapture', type: 'bool', label: 'Close gate tabs when done', help: 'After the file is captured, close the gate tab and any popups it opened.' },
   { sub: 'Wantlist' },
   { path: 'wantlist.enabled', type: 'bool', label: 'Wantlist tracks not found' },
   { path: 'wantlist.intervalHours', type: 'number', step: 1, label: 'Re-check every (hours)' },
@@ -129,7 +135,11 @@ function readForms() {
     const { path, type } = el.dataset;
     let v;
     if (type === 'bool') v = el.checked;
-    else if (type === 'number') v = el.value === '' ? 0 : Number(el.value);
+    else if (type === 'number') {
+      // Empty or garbage keeps the previous value (0 would silently disable thresholds/caps).
+      const n = el.value.trim() === '' ? NaN : Number(el.value);
+      v = Number.isFinite(n) ? n : getPath(settings, path);
+    }
     else if (type === 'list') v = el.value.split('\n').map((s) => s.trim()).filter(Boolean);
     else v = el.value.trim();
     setPath(next, path, v);
@@ -176,9 +186,12 @@ function status(text) {
 }
 
 async function save() {
-  settings = readForms();
+  const raw = readForms();
+  settings = normalizeSettings(raw);
   await saveSettings(settings);
-  status('Saved.');
+  const adjusted = raw.matching.autoThreshold !== settings.matching.autoThreshold || raw.matching.reviewThreshold !== settings.matching.reviewThreshold;
+  renderAll();
+  status(adjusted ? 'Saved (thresholds adjusted into the valid range).' : 'Saved.');
 }
 
 // ---- DJDelivery helpers ---------------------------------------------------------------------
@@ -191,18 +204,25 @@ function originPattern(url) {
   }
 }
 
+/** Every origin the pool config talks to: site, search endpoint, download endpoint. */
+function poolOrigins() {
+  const vals = ['#f-djdelivery-baseUrl', '#f-djdelivery-searchUrl', '#f-djdelivery-download-urlTemplate'].map((id) => $(id)?.value || '');
+  return [...new Set(vals.map((v) => originPattern(v.replace(/\{[^}]*\}/g, 'x'))).filter(Boolean))];
+}
+
 async function refreshGrant() {
-  const pattern = originPattern($('#f-djdelivery-baseUrl').value);
-  if (!pattern) return;
-  const has = await chrome.permissions.contains({ origins: [pattern] });
-  $('#grant-status').textContent = has ? `Access to ${pattern} granted.` : `No access to ${pattern} yet.`;
+  const origins = poolOrigins();
+  if (!origins.length) return;
+  const missing = [];
+  for (const o of origins) if (!(await chrome.permissions.contains({ origins: [o] }))) missing.push(o);
+  $('#grant-status').textContent = missing.length ? `No access yet to ${missing.join(', ')}.` : `Access granted to ${origins.join(', ')}.`;
 }
 
 $('#grant').addEventListener('click', async () => {
-  const pattern = originPattern($('#f-djdelivery-baseUrl').value);
-  if (!pattern) return;
-  const ok = await chrome.permissions.request({ origins: [pattern] });
-  $('#grant-status').textContent = ok ? `Access to ${pattern} granted.` : 'Access not granted.';
+  const origins = poolOrigins();
+  if (!origins.length) return;
+  const ok = await chrome.permissions.request({ origins });
+  $('#grant-status').textContent = ok ? `Access granted to ${origins.join(', ')}.` : 'Access not granted.';
 });
 
 $('#test-run').addEventListener('click', async () => {
@@ -251,7 +271,9 @@ $('#json-map').addEventListener('click', () => {
   }
   settings = readForms();
   settings.djdelivery.format = 'json';
-  settings.djdelivery.json = { ...settings.djdelivery.json, itemsPath: m.itemsPath, ...m.fields };
+  // Only fill fields that were detected; keep anything you set by hand.
+  const found = Object.fromEntries(Object.entries(m.fields).filter(([, v]) => v));
+  settings.djdelivery.json = { ...settings.djdelivery.json, itemsPath: m.itemsPath, ...found };
   renderForm($('#form-pool'), POOL);
   $('#json-status').textContent = `Detected items at "${m.itemsPath || '(root)'}": ${Object.entries(m.fields).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join(', ')}. Review, then Save.`;
 });
@@ -299,25 +321,33 @@ $('#import-file').addEventListener('change', async (ev) => {
   const file = ev.target.files[0];
   if (!file) return;
   try {
-    settings = deepMerge(structuredClone(DEFAULTS), JSON.parse(await file.text()));
+    const parsed = JSON.parse(await file.text());
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !('djdelivery' in parsed || 'sourceOrder' in parsed)) {
+      throw new Error('that file is not a DJ Track Hunter settings export');
+    }
+    settings = normalizeSettings(parsed);
     await saveSettings(settings);
     renderAll();
+    refreshGrant();
     status('Imported.');
   } catch (e) {
     status(`Import failed: ${e.message}`);
   }
+  ev.target.value = '';
 });
 $('#reset').addEventListener('click', async () => {
   if (!confirm('Reset all settings to defaults?')) return;
   settings = structuredClone(DEFAULTS);
   await saveSettings(settings);
   renderAll();
+  refreshGrant();
   status('Reset.');
 });
 $('#export-history').addEventListener('click', async () => {
   const rows = await send({ type: 'list-history', limit: 1000 });
   const cols = ['at', 'status', 'label', 'source', 'file', 'scUrl'];
-  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  // Track titles come from uploaders: neutralise spreadsheet formulas (=, +, -, @).
+  const esc = (v) => `"${String(v ?? '').replace(/^([=+\-@\t\r])/, "'$1").replace(/"/g, '""')}"`;
   const csv = [cols.join(','), ...rows.map((r) => cols.map((c) => esc(c === 'at' ? new Date(r.at).toISOString() : r[c])).join(','))].join('\n');
   downloadBlob('dj-track-hunter-history.csv', 'text/csv', csv);
 });
@@ -334,7 +364,10 @@ document.addEventListener('keydown', (e) => {
   $('#ver').textContent = chrome.runtime.getManifest().version;
   settings = await getSettings();
   renderAll();
-  $('#f-djdelivery-baseUrl').addEventListener('change', refreshGrant);
+  // Delegated: the inputs are re-created whenever the form re-renders.
+  $('#form-pool').addEventListener('change', (ev) => {
+    if (/f-djdelivery-(baseUrl|searchUrl|download-urlTemplate)/.test(ev.target.id)) refreshGrant();
+  });
   refreshGrant();
   renderDiscovery();
 })();

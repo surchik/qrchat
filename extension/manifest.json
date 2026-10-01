@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "DJ Track Hunter",
   "short_name": "Track Hunter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "One click on a SoundCloud track: download it from your DJDelivery pool, or find an artist-sanctioned free download, or add it to your Bandcamp cart.",
   "minimum_chrome_version": "116",
   "permissions": [
@@ -14,7 +14,11 @@
     "notifications",
     "alarms",
     "offscreen",
-    "webRequest"
+    "webRequest",
+    "tabGroups",
+    "contentSettings",
+    "webNavigation",
+    "unlimitedStorage"
   ],
   "host_permissions": [
     "https://soundcloud.com/*",
@@ -24,18 +28,33 @@
     "https://*.djdelivery.com/*",
     "https://bandcamp.com/*",
     "https://*.bandcamp.com/*",
-    "https://*.bcbits.com/*"
+    "https://*.bcbits.com/*",
+    "https://hypeddit.com/*",
+    "https://*.hypeddit.com/*",
+    "https://toneden.io/*",
+    "https://*.toneden.io/*",
+    "https://hive.co/*",
+    "https://*.hive.co/*"
   ],
-  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
   "background": {
     "service_worker": "src/background/sw.js",
     "type": "module"
   },
   "content_scripts": [
     {
-      "matches": ["https://soundcloud.com/*"],
-      "js": ["src/content/soundcloud.js"],
-      "css": ["src/content/soundcloud.css"],
+      "matches": [
+        "https://soundcloud.com/*"
+      ],
+      "js": [
+        "src/content/soundcloud.js"
+      ],
+      "css": [
+        "src/content/soundcloud.css"
+      ],
       "run_at": "document_idle"
     }
   ],
@@ -51,7 +70,9 @@
   "options_page": "src/ui/options.html",
   "commands": {
     "hunt-current": {
-      "suggested_key": { "default": "Alt+Shift+D" },
+      "suggested_key": {
+        "default": "Alt+Shift+D"
+      },
       "description": "Hunt the SoundCloud track that's playing (or open)"
     }
   },

@@ -1,8 +1,9 @@
 // Service worker entry: registers every listener synchronously at top level (MV3 requirement)
 // and routes messages from the SoundCloud content script, popup and options page.
 
-import { hunt, act, wantFromEntry, recheckWantlist } from './pipeline.js';
+import { hunt, act, wantFromEntry, recheckWantlist, checkHuntUrl, reconcileDownloads } from './pipeline.js';
 import { initDownloadListeners } from './downloads.js';
+import { initGateListeners, gateContext, armCapture, applyPopupPolicy } from './gates.js';
 import { captureClientId } from '../adapters/soundcloud.js';
 import { searchPool } from '../adapters/pool.js';
 import { scoreCandidate } from '../lib/match.js';
@@ -14,6 +15,7 @@ import { logRequest, setDiscoveryEnabled, getLog, clearLog } from './discovery.j
 const WANT_ALARM = 'wantlist-recheck';
 
 initDownloadListeners();
+initGateListeners();
 
 chrome.webRequest.onBeforeRequest.addListener(captureClientId, { urls: ['https://api-v2.soundcloud.com/*'] });
 chrome.webRequest.onCompleted.addListener(
@@ -25,6 +27,7 @@ chrome.webRequest.onCompleted.addListener(
 async function applySettings() {
   const s = await getSettings();
   setDiscoveryEnabled(s.discovery.enabled);
+  applyPopupPolicy().catch((e) => console.warn('[DJ Track Hunter] popup policy', e));
   const period = Math.max(1, Number(s.wantlist.intervalHours) || 12) * 60;
   const existing = await chrome.alarms.get(WANT_ALARM);
   if (!s.wantlist.enabled) {
@@ -34,6 +37,11 @@ async function applySettings() {
   }
 }
 applySettings();
+reconcileDownloads().catch(() => {});
+
+function startHunt(args) {
+  hunt(args).catch((e) => console.warn('[DJ Track Hunter] hunt failed', e));
+}
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.settings) applySettings();
@@ -59,7 +67,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   const url = info.menuItemId === 'hunt-link' ? info.linkUrl : info.pageUrl;
-  if (url) hunt({ url, tabId: tab?.id ?? null, origin: 'context-menu' });
+  if (url) startHunt({ url, tabId: tab?.id ?? null, origin: 'context-menu' });
 });
 
 chrome.commands.onCommand.addListener(async (command) => {
@@ -73,7 +81,7 @@ chrome.commands.onCommand.addListener(async (command) => {
   } catch {
     // content script not ready; fall back to the page URL
   }
-  hunt({ url, tabId: tab.id, origin: 'shortcut' });
+  startHunt({ url, tabId: tab.id, origin: 'shortcut' });
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -94,13 +102,19 @@ async function testPool(q) {
 const HANDLERS = {
   // From the SoundCloud page.
   hunt: (msg, sender) => {
-    // Respond immediately; progress streams back to the tab as 'hunt-progress' messages.
-    hunt({ url: msg.url, tabId: sender.tab?.id ?? null, origin: msg.origin || 'button', force: !!msg.force });
+    // Validate now (so the popup sees a real error), then respond immediately; progress
+    // streams back to the tab as 'hunt-progress' messages.
+    checkHuntUrl(msg.url);
+    startHunt({ url: msg.url, tabId: sender.tab?.id ?? null, origin: msg.origin || 'button', force: !!msg.force });
     return { started: true };
   },
   act: (msg, sender) => act({ entryId: msg.entryId, cid: msg.cid, tabId: sender.tab?.id ?? null }),
   want: (msg) => wantFromEntry(msg.entryId),
   'status-for-urls': (msg) => store.statusForUrls(msg.urls || []),
+
+  // From gate tabs (src/content/gate.js).
+  'gate-context': (msg, sender) => (sender.tab ? gateContext(sender.tab.id, msg.url || sender.url) : { active: false }),
+  'gate-armed': (msg, sender) => (sender.tab ? armCapture(sender.tab.id) : null),
 
   // From the popup / options page.
   'list-history': (msg) => store.listEntries(msg.limit || 50),

@@ -33,6 +33,8 @@
     }
     if (u.hostname !== 'soundcloud.com') return null;
     const parts = u.pathname.split('/').filter(Boolean);
+    // System playlists ("Weekly", "Daily Drops") live under /discover/sets/<id>.
+    if (parts[0] === 'discover' && parts[1] === 'sets' && parts.length === 3) return { url: `https://soundcloud.com/${parts.join('/')}`, kind: 'set' };
     if (parts.length < 2 || RESERVED_ROOT.has(parts[0].toLowerCase())) return null;
     const url = `https://soundcloud.com/${parts.join('/')}`;
     if (parts[1] === 'sets' && parts.length >= 3) {
@@ -63,6 +65,8 @@
   function setButtonState(btn, state) {
     btn.dataset.state = state;
     btn.title = STATE_TITLES[state] || STATE_TITLES.idle;
+    btn.setAttribute('aria-label', `DJ Track Hunter: ${btn.title}`);
+    btn.setAttribute('aria-busy', state === 'busy' ? 'true' : 'false');
   }
 
   function makeButton(getTarget, variant) {
@@ -74,6 +78,7 @@
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if (btn.dataset.state === 'busy') return; // already hunting this one
       const target = getTarget();
       if (!target) return;
       startHunt(target.url, btn);
@@ -89,8 +94,20 @@
   }
 
   function updateButtons(url, state) {
-    for (const btn of buttonsByUrl.get(url) || []) {
+    const set = buttonsByUrl.get(url);
+    if (!set) return;
+    for (const btn of set) {
       if (btn.isConnected) setButtonState(btn, state);
+      else set.delete(btn);
+    }
+    if (!set.size) buttonsByUrl.delete(url);
+  }
+
+  /** Drop buttons SoundCloud removed from the page (SPA navigation), so they can be collected. */
+  function pruneButtons() {
+    for (const [url, set] of buttonsByUrl) {
+      for (const btn of set) if (!btn.isConnected && btn !== playerBtn) set.delete(btn);
+      if (!set.size) buttonsByUrl.delete(url);
     }
   }
 
@@ -101,11 +118,21 @@
     '.soundBadgeList__item', '.systemPlaylistTrackList__item', '.chartTracks__item',
     '.historicalPlays__item', '.lazyLoadingList__item', '.userStreamItem', '.trackItem',
   ].join(',');
-  const TITLE_LINK_SELECTORS = 'a.soundTitle__title, a.trackItem__trackTitle, a.soundBadge__title, a.chartTrack__title, a.sound__coverArt, [data-permalink-path]';
-  const ACTION_GROUP_SELECTORS = '.soundActions .sc-button-group, .trackItem__actions .sc-button-group, .sc-button-group';
+  const TITLE_LINK_SELECTORS = ['a.soundTitle__title', 'a.trackItem__trackTitle', 'a.soundBadge__title', 'a.chartTrack__title', 'a.sound__coverArt', '[data-permalink-path]'];
+  const ACTION_GROUP_SELECTORS = ['.soundActions .sc-button-group', '.trackItem__actions .sc-button-group', '.sc-button-group'];
+
+  /** First match by selector priority (not document order) that belongs to this item, not a nested one. */
+  function firstOwn(item, selectors) {
+    for (const sel of selectors) {
+      for (const el of item.querySelectorAll(sel)) {
+        if (el.closest(ITEM_SELECTORS) === item) return el;
+      }
+    }
+    return null;
+  }
 
   function trackTargetIn(item) {
-    const el = item.querySelector(TITLE_LINK_SELECTORS);
+    const el = firstOwn(item, TITLE_LINK_SELECTORS);
     if (el) {
       const href = el.getAttribute('href') || el.getAttribute('data-permalink-path');
       const t = href && classify(href);
@@ -125,9 +152,9 @@
       if (!target) continue;
       const btn = makeButton(() => target, 'inline');
       register(target.url, btn);
-      const group = item.querySelector(ACTION_GROUP_SELECTORS);
+      const group = firstOwn(item, ACTION_GROUP_SELECTORS);
       if (group) group.appendChild(btn);
-      else (item.querySelector(TITLE_LINK_SELECTORS)?.parentElement || item).appendChild(btn);
+      else (firstOwn(item, TITLE_LINK_SELECTORS)?.parentElement || item).appendChild(btn);
       item.dataset.djh = '1';
     }
   }
@@ -136,13 +163,19 @@
 
   // Items that don't qualify are re-examined a few times (content can arrive late), then skipped.
   const heuristicTries = new WeakMap();
+  const heuristicSig = new WeakMap();
 
   function injectHeuristic() {
     const root = document.querySelector('main, #content, #app') || document.body;
     for (const item of root.querySelectorAll('li, article, [role="listitem"]')) {
-      if (item.dataset.djh || item.querySelector('.djh-btn') || item.closest('[data-djh]')) continue;
+      if (item.dataset.djh) continue;
       const tries = heuristicTries.get(item) || 0;
       if (tries >= 3) continue;
+      if (item.querySelector('.djh-btn') || item.closest('[data-djh]')) continue;
+      // Count a try only when the item's content changed since last time (late-loading rows).
+      const sig = item.childElementCount * 1000 + (item.textContent || '').length;
+      if (heuristicSig.get(item) === sig) continue;
+      heuristicSig.set(item, sig);
       heuristicTries.set(item, tries + 1);
       const links = new Map();
       for (const a of item.querySelectorAll('a[href]')) {
@@ -173,7 +206,7 @@
     if (!page) return;
     const hero = document.querySelector('.listenEngagement__footer .sc-button-group, .fullListenHero .sc-button-group, .listenDetails .sc-button-group');
     if (!hero || hero.querySelector('.djh-btn')) return;
-    const btn = makeButton(() => page, 'inline');
+    const btn = makeButton(() => currentPageTarget(), 'inline');
     register(page.url, btn);
     hero.appendChild(btn);
   }
@@ -204,12 +237,12 @@
       :host { all: initial; }
       .wrap { position: fixed; z-index: 2147483000; font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #f4f4f5; }
       .fab-wrap { right: 18px; bottom: 72px; }
-      .toasts { left: 18px; bottom: 72px; display: flex; flex-direction: column-reverse; gap: 8px; width: min(380px, calc(100vw - 36px)); }
+      .toasts { pointer-events: none; left: 18px; bottom: 72px; display: flex; flex-direction: column-reverse; gap: 8px; width: min(380px, calc(100vw - 36px)); }
       .fab { display: none; align-items: center; gap: 6px; padding: 9px 14px; border-radius: 999px; border: 0; cursor: pointer;
         background: #7c3aed; color: #fff; font-weight: 600; font-size: 13px; box-shadow: 0 6px 18px rgba(0,0,0,.35); }
       .fab:hover { background: #6d28d9; }
       .fab.show { display: inline-flex; }
-      .card { background: #18181b; border: 1px solid #3f3f46; border-radius: 10px; padding: 10px 12px; box-shadow: 0 8px 24px rgba(0,0,0,.45); }
+      .card { pointer-events: auto; background: #18181b; border: 1px solid #3f3f46; border-radius: 10px; padding: 10px 12px; box-shadow: 0 8px 24px rgba(0,0,0,.45); }
       .head { display: flex; align-items: center; gap: 8px; }
       .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: #a1a1aa; }
       .busy .dot { background: #a78bfa; animation: pulse 1s infinite; }
@@ -230,12 +263,13 @@
       .actions { margin-top: 8px; display: flex; gap: 6px; justify-content: flex-end; }
     </style>
     <div class="wrap fab-wrap"><button class="fab" type="button">${ICON}<span>Hunt</span></button></div>
-    <div class="wrap toasts"></div>`;
+    <div class="wrap toasts" role="status" aria-live="polite"></div>`;
   const fab = shadow.querySelector('.fab');
   const toasts = shadow.querySelector('.toasts');
+  const inFlight = new Set();
   fab.addEventListener('click', () => {
     const t = currentPageTarget();
-    if (t) startHunt(t.url, null);
+    if (t && !inFlight.has(t.url)) startHunt(t.url, null);
   });
 
   function ensureHost() {
@@ -272,23 +306,44 @@
     card.className = `card ${msg.state}`;
     clearTimeout(card._timer);
     const close = () => {
+      clearTimeout(card._timer);
       card.remove();
       cards.delete(msg.entryId);
     };
     const kids = [
-      h('div', { class: 'head' }, h('span', { class: 'dot' }), h('span', { class: 'label', title: msg.label }, msg.label), h('button', { class: 'x', title: 'Dismiss', onclick: close }, '×')),
+      h('div', { class: 'head' }, h('span', { class: 'dot' }), h('span', { class: 'label', title: msg.label }, msg.label), h('button', { class: 'x', title: 'Dismiss', 'aria-label': 'Dismiss', onclick: close }, '×')),
       h('div', { class: 'msg' }, msg.message || ''),
     ];
     if (msg.final && msg.notes?.length && msg.state !== 'done') {
       kids.push(h('ul', { class: 'notes' }, msg.notes.map((n) => h('li', {}, n))));
     }
-    if (msg.state === 'review' && msg.candidates?.length) {
+    // Candidates stay visible after a failed pick so you can try another one.
+    if ((msg.state === 'review' || (msg.state === 'error' && msg.final)) && msg.candidates?.length) {
       kids.push(h('div', { class: 'cands' }, msg.candidates.map((c) => h('div', { class: 'cand' },
         h('div', { class: 'txt' },
-          h('div', { class: 't', title: `${c.artist} - ${c.title} ${c.version || ''}` }, `${c.artist ? `${c.artist} - ` : ''}${c.title}${c.version ? ` (${c.version})` : ''}`),
+          h('div', { class: 't', title: `${c.artist ? `${c.artist} - ` : ''}${c.title}${c.version ? ` (${c.version})` : ''}` }, `${c.artist ? `${c.artist} - ` : ''}${c.title}${c.version ? ` (${c.version})` : ''}`),
           h('div', { class: 's' }, `${c.sourceLabel} · ${Math.round(c.score * 100)}%${c.detail ? ` · ${c.detail}` : ''}`)),
-        h('button', { class: 'btn', onclick: () => send({ type: 'act', entryId: msg.entryId, cid: c.cid }) }, ACTION_LABEL[c.kind] || 'Go')))));
-      kids.push(h('div', { class: 'actions' }, h('button', { class: 'btn secondary', onclick: () => { send({ type: 'want', entryId: msg.entryId }); updateButtons(msg.scUrl, 'want'); close(); } }, 'Wantlist it')));
+        h('button', {
+          class: 'btn',
+          onclick: (ev) => {
+            ev.currentTarget.disabled = true;
+            ev.currentTarget.textContent = '…';
+            send({ type: 'act', entryId: msg.entryId, cid: c.cid });
+          },
+        }, ACTION_LABEL[c.kind] || 'Go')))));
+      kids.push(h('div', { class: 'actions' }, h('button', {
+        class: 'btn secondary',
+        onclick: async (ev) => {
+          ev.currentTarget.disabled = true;
+          const res = await send({ type: 'want', entryId: msg.entryId });
+          if (res?.ok) {
+            updateButtons(msg.scUrl, 'want');
+            close();
+          } else {
+            ev.currentTarget.textContent = 'Couldn’t wantlist';
+          }
+        },
+      }, 'Wantlist it')));
     }
     if (msg.owned) {
       kids.push(h('div', { class: 'actions' }, h('button', { class: 'btn secondary', onclick: () => { close(); startHunt(msg.scUrl, null, true); } }, 'Search again anyway')));
@@ -299,19 +354,54 @@
 
   // ---- messaging ------------------------------------------------------------------------------------
 
-  function send(msg) {
-    return chrome.runtime.sendMessage(msg).catch((e) => ({ ok: false, error: String(e) }));
+  let orphaned = false;
+  /** The extension was reloaded/updated: this copy of the script can no longer talk to it. */
+  function teardown() {
+    if (orphaned) return;
+    orphaned = true;
+    observer?.disconnect();
+    document.querySelectorAll('.djh-btn').forEach((b) => b.remove());
+    host.remove();
   }
 
-  function startHunt(url, btn, force = false) {
+  async function send(msg) {
+    if (orphaned || !chrome.runtime?.id) {
+      teardown();
+      return { ok: false, error: 'extension reloaded' };
+    }
+    try {
+      return await chrome.runtime.sendMessage(msg);
+    } catch (e) {
+      if (/context invalidated/i.test(String(e?.message))) teardown();
+      return { ok: false, error: String(e?.message || e) };
+    }
+  }
+
+  async function startHunt(url, btn, force = false) {
     if (btn) setButtonState(btn, 'busy');
     updateButtons(url, 'busy');
-    send({ type: 'hunt', url, force });
+    inFlight.add(url);
+    const res = await send({ type: 'hunt', url, force });
+    if (!res?.ok) {
+      inFlight.delete(url);
+      if (btn) setButtonState(btn, 'error');
+      updateButtons(url, 'error');
+      if (!orphaned) {
+        ensureHost();
+        renderCard({ entryId: `local-${url}`, scUrl: url, label: url.replace('https://soundcloud.com/', ''), state: 'error', message: res?.error || 'Could not start the hunt', final: true });
+      }
+    }
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type === 'hunt-progress') {
       if (msg.scUrl) updateButtons(msg.scUrl, msg.state);
+      // The URL the button was registered under may differ from the canonical permalink.
+      if (msg.reqUrl && msg.reqUrl !== msg.scUrl) updateButtons(msg.reqUrl, msg.state);
+      if (msg.final) {
+        inFlight.delete(msg.scUrl);
+        if (msg.reqUrl) inFlight.delete(msg.reqUrl);
+      }
       if (!msg.silent) {
         ensureHost();
         renderCard(msg);
@@ -348,9 +438,14 @@
     ensureHost();
     if (location.href !== lastHref) {
       lastHref = location.href;
-      cards.forEach((c) => {
-        if (!c.classList.contains('busy') && !c.classList.contains('review')) c.remove();
-      });
+      for (const [id, c] of cards) {
+        if (!c.classList.contains('busy') && !c.classList.contains('review') && !c.classList.contains('gate')) {
+          clearTimeout(c._timer);
+          c.remove();
+          cards.delete(id);
+        }
+      }
+      pruneButtons();
     }
     try {
       injectClassic();
@@ -365,11 +460,16 @@
   }
 
   let scanTimer = null;
-  new MutationObserver(() => {
+  // Ignore mutations that can't add tracks: our own UI and the player's ticking time display.
+  const IGNORE = '#djh-root, .playbackTimeline, [class*="playbackTimeline"]';
+  var observer = new MutationObserver((records) => {
+    if (orphaned) return;
+    if (records.every((r) => r.target instanceof Element && r.target.closest(IGNORE))) return;
     if (!scanTimer) scanTimer = setTimeout(() => {
       scanTimer = null;
       scan();
     }, 350);
-  }).observe(document.documentElement, { childList: true, subtree: true });
+  });
+  observer.observe(document.documentElement, { childList: true, subtree: true });
   scan();
 })();

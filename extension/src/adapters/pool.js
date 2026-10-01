@@ -16,8 +16,10 @@ function originOf(cfg) {
 
 /** Search strings to try, in order, e.g. "Artist Title" then just "Title". */
 export function buildQueries(cfg, query) {
+  // {artist} is the full credit ("Chase & Status", "Above & Beyond"); {mainartist} the first name.
   const vars = {
-    artist: (query.artist || '').split(/\s*(?:,|&|\bx\b|\bfeat\.?|\bft\.?)\s*/i)[0],
+    artist: query.artist,
+    mainartist: (query.artist || '').split(/\s*(?:,|&|\bx\b|\bfeat\.?|\bft\.?)\s*/i)[0],
     fullartist: query.artist,
     title: query.title,
     mix: query.mix,
@@ -128,7 +130,9 @@ async function tabRender(cfg, url) {
       });
       const out = res?.result;
       const tab = await chrome.tabs.get(tabId);
-      if (out && (out.items.length || out.loginDetected)) return { ...out, url: tab.url, status: 200 };
+      if (out?.items.length) return { ...out, url: tab.url, status: 200 };
+      // Only trust the login selector once the page has had time to render its results.
+      if (out?.loginDetected && i >= 12) return { ...out, url: tab.url, status: 200 };
       if (looksLikeLogin(cfg, { url: tab.url })) return { items: [], loginDetected: true, url: tab.url, status: 200 };
       await sleep(500);
     }
@@ -159,7 +163,9 @@ async function runSearch(cfg, url) {
   }
   const out = await parseHtml('pool-rows', res.text, { cfg: { ...cfg.html, loginSelector: cfg.loginSelector }, baseUrl: res.url || cfg.baseUrl });
   if (out.error) return { status: 'error', message: out.error };
-  if (out.loginDetected && !out.items.length) return { status: 'login' };
+  // A password field alone is weak evidence (logged-in pages often carry a hidden login modal):
+  // report it, but let the caller try its other queries first.
+  if (out.loginDetected && !out.items.length) return { status: 'login', weak: true };
   return { status: 'ok', items: out.items };
 }
 
@@ -169,14 +175,19 @@ async function runSearch(cfg, url) {
 export async function searchPool(cfg, query) {
   if (!cfg.searchUrl) return { status: 'unconfigured' };
   const host = new URL(cfg.baseUrl).host;
+  let weakLogin = null;
   for (const q of buildQueries(cfg, query)) {
     const url = cfg.searchUrl.replace(/\{query\}/g, encodeURIComponent(q));
     await throttle(`pool:${host}`, cfg.minIntervalMs || 3000);
     const r = await runSearch(cfg, url);
+    if (r.status === 'login' && r.weak) {
+      weakLogin = r;
+      continue;
+    }
     if (r.status !== 'ok') return r;
     if (r.items.length) return { ...r, usedQuery: q };
   }
-  return { status: 'ok', items: [] };
+  return weakLogin || { status: 'ok', items: [] };
 }
 
 /** Turn a result row into a downloadable URL (+ headers when the pool needs a bearer token). */

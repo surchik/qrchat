@@ -12,11 +12,18 @@ Ordered by value to a working DJ divided by build effort. Effort: S = under a da
 - Whole-set hunting (playlists/albums), wantlist with periodic DJDelivery re-check + notification + auto-download
 - "Already have it" badges on SoundCloud, history, CSV export, settings backup, Discovery mode for configuring DJDelivery
 
+## Done in v0.2
+
+- Gates: new tab next to SoundCloud; whole sets open all gates in a "Gates" tab group; autopilot (fill + click steps, OAuth approval only back to known gate domains); per-tab download attribution; gate tabs closed after capture
+- Matching hardened against ~50 adversarial cases (same remixer but a Dub/Edit, unnamed remixes, covers/sped-up, acapella-only pools, "Glue" vs "Glue 2", "Eric" vs "Eric Prydz"); explicitly requested versions win over pool preferences
+- Reliability: downloads reconciled after browser restarts, wantlist only marked found on a finished download and rotated fairly, quota refunds and pacing for pool downloads, no hijacking of unrelated downloads, orphaned content scripts clean up after extension updates, settings validation
+
 ## Next: highest leverage
 
 | # | Feature | Why it matters | Effort |
 |---|---|---|---|
-| 1 | **DJDelivery preset** | Replace the manual setup with a tested adapter (needs one Discovery log + one search response from you). | S |
+| 1 | **DJDelivery preset + live verification** | Replace the manual setup with a tested adapter (needs one Discovery log + one search response from you), and run the suites against real SoundCloud / Bandcamp / Hypeddit pages once the build environment can reach them. | S |
+| 1b | **Gate recipes** | Per-service step scripts (Hypeddit, ToneDen, Hive) tuned on the real pages instead of generic text matching; a gate "success rate" log so failures surface. | S–M |
 | 2 | **Fake-lossless detector** | Run every downloaded file through an FFT (OfflineAudioContext) and flag WAV/AIFF files whose spectrum cuts off around 16 kHz or 19–20 kHz, the usual sign of upsampled MP3. Free gates and some pools serve these more often than people think. Tag or rename them so you never play a transcode on a big system. | M |
 | 3 | **Library dedupe** | Import a rekordbox XML / Traktor NML / Serato crate, or pick your music folder (File System Access API), and mark tracks you already own *before* spending a pool download or Bandcamp money. History only knows what this extension downloaded. | M |
 | 4 | **Mix tracklist hunting** | Parse tracklists from a mix's description/comments ("12:34 Artist - Title") and batch-hunt every ID. Mixes are where most DJs discover music; this turns one click into a crate. | S–M |

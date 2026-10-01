@@ -8,10 +8,15 @@ const API = 'https://api-v2.soundcloud.com/';
 const CLIENT_ID_RE = /^[0-9a-zA-Z]{32}$/;
 
 /** webRequest observer: the web player sends client_id on every API call; remember it. */
+let lastCaptured = '';
 export function captureClientId(details) {
   try {
     const id = new URL(details.url).searchParams.get('client_id');
-    if (id && CLIENT_ID_RE.test(id)) chrome.storage.session.set({ scClientId: id });
+    // The player makes many API calls; only write when the id actually changes.
+    if (id && id !== lastCaptured && CLIENT_ID_RE.test(id)) {
+      lastCaptured = id;
+      chrome.storage.session.set({ scClientId: id });
+    }
   } catch {
     // ignore malformed URLs
   }
@@ -47,14 +52,27 @@ export async function isLoggedIn() {
   return !!(await authHeaders()).Authorization;
 }
 
-export async function api(path, params = {}, { retried = false, retryAuth = true } = {}) {
-  const clientId = await getClientId({ refresh: retried });
+let lastRefresh = 0;
+
+/**
+ * 401/403 handling, cheapest first: retry without your (possibly stale) OAuth token; only if that
+ * also fails, re-scrape a fresh client_id (at most once per 10 minutes).
+ */
+export async function api(path, params = {}, { attempt = 0, retryAuth = true } = {}) {
+  const refresh = attempt === 2;
+  const clientId = await getClientId({ refresh });
   const url = new URL(path, API);
   for (const [k, v] of Object.entries(params)) if (v != null) url.searchParams.set(k, String(v));
   url.searchParams.set('client_id', clientId);
-  const res = await fetch(url.href, { headers: { Accept: 'application/json', ...(await authHeaders()) } });
-  // A rotated client_id shows up as 401/403: refresh it once.
-  if ((res.status === 401 || res.status === 403) && !retried && retryAuth) return api(path, params, { retried: true });
+  const auth = attempt === 1 ? {} : await authHeaders();
+  const res = await fetch(url.href, { headers: { Accept: 'application/json', ...auth } });
+  if ((res.status === 401 || res.status === 403) && retryAuth) {
+    if (attempt === 0 && auth.Authorization) return api(path, params, { attempt: 1 });
+    if (attempt < 2 && Date.now() - lastRefresh > 10 * 60 * 1000) {
+      lastRefresh = Date.now();
+      return api(path, params, { attempt: 2 });
+    }
+  }
   if (!res.ok) {
     const err = new Error(`SoundCloud API ${res.status} on ${url.pathname}`);
     err.status = res.status;

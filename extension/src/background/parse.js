@@ -4,17 +4,20 @@ const OFFSCREEN_PATH = 'src/offscreen/offscreen.html';
 let creating = null;
 
 async function ensureOffscreen() {
-  const url = chrome.runtime.getURL(OFFSCREEN_PATH);
-  const contexts = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [url] });
-  if (contexts.length) return;
-  if (!creating) {
-    creating = chrome.offscreen
-      .createDocument({ url: OFFSCREEN_PATH, reasons: ['DOM_PARSER'], justification: 'Parse record pool and store search pages' })
-      .finally(() => {
-        creating = null;
-      });
-  }
-  await creating;
+  if (creating) return creating;
+  creating = (async () => {
+    const url = chrome.runtime.getURL(OFFSCREEN_PATH);
+    const contexts = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [url] });
+    if (contexts.length) return;
+    try {
+      await chrome.offscreen.createDocument({ url: OFFSCREEN_PATH, reasons: ['DOM_PARSER'], justification: 'Parse record pool and store search pages' });
+    } catch (e) {
+      if (!/single offscreen/i.test(String(e?.message))) throw e;
+    }
+  })().finally(() => {
+    creating = null;
+  });
+  return creating;
 }
 
 /**

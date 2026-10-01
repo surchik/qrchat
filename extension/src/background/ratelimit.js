@@ -14,18 +14,37 @@ export async function throttle(key, minMs) {
 }
 
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-/** Count one download against the daily cap; throws once the cap is reached. */
-export async function takeDailyQuota(key, cap) {
-  if (!cap) return;
-  const { quotas = {} } = await chrome.storage.local.get('quotas');
-  const day = today();
-  const k = `${day}:${key}`;
-  const used = quotas[k] || 0;
-  if (used >= cap) throw new Error(`Daily cap reached for ${key} (${cap}). Raise it in Settings if you're sure.`);
-  for (const old of Object.keys(quotas)) if (!old.startsWith(day)) delete quotas[old];
-  quotas[k] = used + 1;
-  await chrome.storage.local.set({ quotas });
+let quotaChain = Promise.resolve();
+function serialized(fn) {
+  const run = quotaChain.then(fn, fn);
+  quotaChain = run.catch(() => {});
+  return run;
+}
+
+/**
+ * Count one download against the local-day cap; throws once the cap is reached.
+ * Returns a refund() to call if the download then fails to start.
+ */
+export function takeDailyQuota(key, cap) {
+  return serialized(async () => {
+    const noop = async () => {};
+    if (!cap) return noop;
+    const { quotas = {} } = await chrome.storage.local.get('quotas');
+    const day = today();
+    const k = `${day}:${key}`;
+    const used = quotas[k] || 0;
+    if (used >= cap) throw new Error(`Daily cap reached for ${key} (${cap}). Raise it in Settings if you're sure.`);
+    for (const old of Object.keys(quotas)) if (!old.startsWith(day)) delete quotas[old];
+    quotas[k] = used + 1;
+    await chrome.storage.local.set({ quotas });
+    return () => serialized(async () => {
+      const { quotas: q = {} } = await chrome.storage.local.get('quotas');
+      if (q[k]) q[k] -= 1;
+      await chrome.storage.local.set({ quotas: q });
+    });
+  });
 }
